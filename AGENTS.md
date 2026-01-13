@@ -16,9 +16,16 @@
 - Added small helpers for URL building, card section extraction, tag parsing, and HTML entity normalization; included structured logging for each step to aid debugging and traceability.
 - Extended blueprint parsing to include the cover link URL by extracting the `o-blueprint-card__cover` anchor href and returning it on each result, warning when missing for traceability.
 - Added `fetchBlueprintDetails` and parsers in `src/blueprints/blueprint-scraper.ts` to fetch a blueprint page by relative path, extract the blueprint text from the textarea, and parse requirement entities plus recipe subcomponents with structured logging and HTML normalization.
+- Fixed requirements parsing to correctly capture the full requirements list by scanning for balanced `<ul>` tags, preventing nested recipe lists from truncating the results.
+- Added an `includeBlueprint` option to `fetchBlueprintDetails` so callers can skip parsing the blueprint textarea when only requirements are needed, with logging to reflect the skip.
+- Added description and tags extraction to `fetchBlueprintDetails` by parsing the `trix-content` block and `t-blueprint__tags` tooltips, returning both alongside requirements.
 
 # Memories
 - Decision: extracted the blueprint URL via the `o-blueprint-card__cover` anchor href and decoded entities so callers receive a clean relative path.
 - Work: added a `url` field to `Blueprint` results and warned when it is missing during card parsing.
 - Decision: parse blueprint requirements by splitting on the top-level requirement list item marker to avoid nested recipe list interference.
 - Work: implemented blueprint detail fetching and requirement/recipe extraction helpers with count parsing and logging.
+- Decision: switched to a balanced `<ul>` scan when extracting the requirements list to avoid regex truncation on nested recipe lists.
+- Work: added an `includeBlueprint` option to skip blueprint textarea parsing when only requirements are needed.
+- Decision: parse blueprint tags from the dedicated tags section to avoid unrelated tooltip content elsewhere on the page.
+- Work: added blueprint description and tag extraction helpers and surfaced them on `BlueprintDetails`.

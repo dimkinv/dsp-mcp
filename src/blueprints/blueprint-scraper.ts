@@ -20,6 +20,8 @@ export type BlueprintRequirement = {
 export type BlueprintDetails = {
   blueprint: string;
   requirements: BlueprintRequirement[];
+  tags: string[];
+  description: string;
 };
 
 type BlueprintSearchParams = {
@@ -76,9 +78,16 @@ export async function searchBlueprints(
   return blueprints;
 }
 
+type FetchBlueprintDetailsOptions = {
+  includeBlueprint?: boolean;
+};
+
 export async function fetchBlueprintDetails(
   relativePath: string,
+  options: FetchBlueprintDetailsOptions = {},
 ): Promise<BlueprintDetails> {
+  const includeBlueprint = options.includeBlueprint ?? true;
+
   console.log(
     "[blueprint-scraper:fetchBlueprintDetails] building blueprint url",
     relativePath,
@@ -104,8 +113,18 @@ export async function fetchBlueprintDetails(
     html.length,
   );
 
-  const blueprint = extractBlueprintText(html);
+  const blueprint = includeBlueprint
+    ? extractBlueprintText(html)
+    : "";
   const requirements = extractBlueprintRequirements(html);
+  const tags = extractBlueprintTagNames(html);
+  const description = extractBlueprintDescription(html);
+
+  if (!includeBlueprint) {
+    console.debug(
+      "[blueprint-scraper:fetchBlueprintDetails] blueprint extraction skipped",
+    );
+  }
 
   console.log(
     "[blueprint-scraper:fetchBlueprintDetails] blueprint details parsed",
@@ -115,6 +134,8 @@ export async function fetchBlueprintDetails(
   return {
     blueprint,
     requirements,
+    tags,
+    description,
   };
 }
 
@@ -215,11 +236,8 @@ function extractBlueprintText(html: string): string {
 }
 
 function extractBlueprintRequirements(html: string): BlueprintRequirement[] {
-  const requirementsSectionMatch = html.match(
-    /<div class="t-blueprint__requirements">[\s\S]*?<ul class="t-blueprint__requirements-data">([\s\S]*?)<\/ul>/,
-  );
-
-  if (!requirementsSectionMatch?.[1]) {
+  const listHtml = extractRequirementsListHtml(html);
+  if (!listHtml) {
     console.warn(
       "[blueprint-scraper:extractBlueprintRequirements] missing requirements list",
     );
@@ -227,7 +245,7 @@ function extractBlueprintRequirements(html: string): BlueprintRequirement[] {
   }
 
   const entitySections = extractRequirementEntitySections(
-    requirementsSectionMatch[1],
+    listHtml,
   );
 
   const requirements = entitySections
@@ -243,6 +261,136 @@ function extractBlueprintRequirements(html: string): BlueprintRequirement[] {
   );
 
   return requirements;
+}
+
+function extractBlueprintTagNames(html: string): string[] {
+  const tagSection = extractBlueprintTagSection(html);
+  if (!tagSection) {
+    console.warn(
+      "[blueprint-scraper:extractBlueprintTagNames] missing tag section",
+    );
+    return [];
+  }
+
+  const tagMatches = tagSection.matchAll(
+    /data-tippy-content="([^"]+)"/g,
+  );
+  const tags: string[] = [];
+
+  for (const match of tagMatches) {
+    const tag = normalizeText(match[1] ?? "");
+    if (tag.length > 0) {
+      tags.push(tag);
+    }
+  }
+
+  if (tags.length === 0) {
+    console.warn(
+      "[blueprint-scraper:extractBlueprintTagNames] no tags found",
+    );
+  }
+
+  return tags;
+}
+
+function extractBlueprintDescription(html: string): string {
+  const descriptionMatch = html.match(
+    /<div class="trix-content">[\s\S]*?<div>([\s\S]*?)<\/div>/,
+  );
+
+  if (!descriptionMatch?.[1]) {
+    console.warn(
+      "[blueprint-scraper:extractBlueprintDescription] missing description",
+    );
+    return "";
+  }
+
+  return normalizeText(descriptionMatch[1].replace(/<[^>]+>/g, " "));
+}
+
+function extractBlueprintTagSection(html: string): string | null {
+  const marker = '<div class="t-blueprint__tags">';
+  const start = html.indexOf(marker);
+  if (start === -1) {
+    return null;
+  }
+
+  let cursor = start + marker.length;
+  let depth = 1;
+
+  while (cursor < html.length) {
+    const nextOpen = html.indexOf("<div", cursor);
+    const nextClose = html.indexOf("</div>", cursor);
+
+    if (nextClose === -1) {
+      console.warn(
+        "[blueprint-scraper:extractBlueprintTagSection] closing div not found",
+      );
+      return null;
+    }
+
+    if (nextOpen !== -1 && nextOpen < nextClose) {
+      depth += 1;
+      cursor = nextOpen + 4;
+      continue;
+    }
+
+    depth -= 1;
+    if (depth === 0) {
+      return html.slice(start + marker.length, nextClose);
+    }
+
+    cursor = nextClose + 6;
+  }
+
+  console.warn(
+    "[blueprint-scraper:extractBlueprintTagSection] tag section not closed",
+  );
+  return null;
+}
+
+function extractRequirementsListHtml(html: string): string | null {
+  const listMarker = '<ul class="t-blueprint__requirements-data">';
+  const start = html.indexOf(listMarker);
+  if (start === -1) {
+    console.warn(
+      "[blueprint-scraper:extractRequirementsListHtml] requirements list marker not found",
+    );
+    return null;
+  }
+
+  let cursor = start + listMarker.length;
+  let depth = 1;
+
+  while (cursor < html.length) {
+    const nextOpen = html.indexOf("<ul", cursor);
+    const nextClose = html.indexOf("</ul>", cursor);
+
+    if (nextClose === -1) {
+      console.warn(
+        "[blueprint-scraper:extractRequirementsListHtml] closing list tag not found",
+      );
+      return null;
+    }
+
+    if (nextOpen !== -1 && nextOpen < nextClose) {
+      depth += 1;
+      cursor = nextOpen + 3;
+      continue;
+    }
+
+    depth -= 1;
+    if (depth === 0) {
+      return html.slice(start + listMarker.length, nextClose);
+    }
+
+    cursor = nextClose + 5;
+  }
+
+  console.warn(
+    "[blueprint-scraper:extractRequirementsListHtml] requirements list not closed",
+  );
+  return null;
 }
 
 function extractRequirementEntitySections(listHtml: string): string[] {
@@ -394,9 +542,8 @@ async function foo(){
   // });
   
   // console.log("Search results:", res);
-  const res = await fetchBlueprintDetails('/blueprints/factory-3-second-universe-matrix-factory-proliferated-defenses');
+  const res = await fetchBlueprintDetails('/blueprints/factory-3-second-universe-matrix-factory-proliferated-defenses', {includeBlueprint: false});
   console.log("Blueprint details:", res);
 }
 
 foo();
-
