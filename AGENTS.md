@@ -14,3 +14,11 @@
 # Summary
 - Added `searchBlueprints` in `src/blueprints/blueprint-scraper.ts` to build the search URL, fetch HTML, parse blueprint cards, and return id/name/author/tags; kept parsing lightweight with string scanning and regex to avoid extra dependencies.
 - Added small helpers for URL building, card section extraction, tag parsing, and HTML entity normalization; included structured logging for each step to aid debugging and traceability.
+- Extended blueprint parsing to include the cover link URL by extracting the `o-blueprint-card__cover` anchor href and returning it on each result, warning when missing for traceability.
+- Added `fetchBlueprintDetails` and parsers in `src/blueprints/blueprint-scraper.ts` to fetch a blueprint page by relative path, extract the blueprint text from the textarea, and parse requirement entities plus recipe subcomponents with structured logging and HTML normalization.
+
+# Memories
+- Decision: extracted the blueprint URL via the `o-blueprint-card__cover` anchor href and decoded entities so callers receive a clean relative path.
+- Work: added a `url` field to `Blueprint` results and warned when it is missing during card parsing.
+- Decision: parse blueprint requirements by splitting on the top-level requirement list item marker to avoid nested recipe list interference.
+- Work: implemented blueprint detail fetching and requirement/recipe extraction helpers with count parsing and logging.
