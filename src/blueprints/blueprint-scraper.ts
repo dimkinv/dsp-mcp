@@ -535,15 +535,3 @@ function decodeHtmlEntities(value: string): string {
     .replace(/&#39;/g, "'");
 }
 
-async function foo(){
-  // const res = await searchBlueprints({
-  //   search: "factory",
-  
-  // });
-  
-  // console.log("Search results:", res);
-  const res = await fetchBlueprintDetails('/blueprints/factory-3-second-universe-matrix-factory-proliferated-defenses', {includeBlueprint: false});
-  console.log("Blueprint details:", res);
-}
-
-foo();
