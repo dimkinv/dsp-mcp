@@ -19,6 +19,7 @@
 - Fixed requirements parsing to correctly capture the full requirements list by scanning for balanced `<ul>` tags, preventing nested recipe lists from truncating the results.
 - Added an `includeBlueprint` option to `fetchBlueprintDetails` so callers can skip parsing the blueprint textarea when only requirements are needed, with logging to reflect the skip.
 - Added description and tags extraction to `fetchBlueprintDetails` by parsing the `trix-content` block and `t-blueprint__tags` tooltips, returning both alongside requirements.
+- Switched blueprint parsing to Cheerio selectors for cards, requirements, tags, and descriptions, simplifying HTML traversal and ensuring consistent text extraction while keeping structured logging for missing data.
 
 # Memories
 - Decision: extracted the blueprint URL via the `o-blueprint-card__cover` anchor href and decoded entities so callers receive a clean relative path.
