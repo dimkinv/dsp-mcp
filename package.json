@@ -13,6 +13,7 @@
   "license": "ISC",
   "packageManager": "pnpm@10.16.1",
   "dependencies": {
+    "cheerio": "^1.0.0-rc.12",
     "express": "^5.1.0",
     "swagger-ui-express": "^5.0.1"
   },

@@ -19,6 +19,7 @@
 - Fixed requirements parsing to correctly capture the full requirements list by scanning for balanced `<ul>` tags, preventing nested recipe lists from truncating the results.
 - Added an `includeBlueprint` option to `fetchBlueprintDetails` so callers can skip parsing the blueprint textarea when only requirements are needed, with logging to reflect the skip.
 - Added description and tags extraction to `fetchBlueprintDetails` by parsing the `trix-content` block and `t-blueprint__tags` tooltips, returning both alongside requirements.
+- Switched blueprint parsing to Cheerio selectors for cards, requirements, tags, and descriptions, simplifying HTML traversal and ensuring consistent text extraction while keeping structured logging for missing data.
 - Added `src/express-server.ts` with an Express API wrapper exposing health, search, and details endpoints, plus OpenAPI JSON and Swagger UI for quick inspection and testing.
 - Added input parsing and error handling for query parameters, keeping optional `includeBlueprint` behavior aligned with the scraper defaults and logging each request path.
 - Updated `package.json` with server dependencies/types and a `dev` script, plus `tsconfig.json` node types to keep strict TypeScript checks working with Express.

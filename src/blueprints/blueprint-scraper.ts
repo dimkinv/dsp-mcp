@@ -1,3 +1,6 @@
+import { load } from "cheerio";
+import type { Cheerio, Element } from "cheerio";
+
 export type Blueprint = {
   id: string;
   name: string;
@@ -60,14 +63,16 @@ export async function searchBlueprints(
     html.length,
   );
 
-  const cardSections = extractBlueprintCardSections(html);
+  const $ = load(html);
+  const cardElements = $("li.o-blueprint-card.factory");
   console.debug(
     "[blueprint-scraper:searchBlueprints] card sections found",
-    cardSections.length,
+    cardElements.length,
   );
 
-  const blueprints = cardSections
-    .map(parseBlueprintCard)
+  const blueprints = cardElements
+    .toArray()
+    .map((element) => parseBlueprintCard($, element))
     .filter((blueprint): blueprint is Blueprint => blueprint !== null);
 
   console.log(
@@ -112,13 +117,14 @@ export async function fetchBlueprintDetails(
     "[blueprint-scraper:fetchBlueprintDetails] html loaded",
     html.length,
   );
+  const $ = load(html);
 
   const blueprint = includeBlueprint
-    ? extractBlueprintText(html)
+    ? extractBlueprintText($)
     : "";
-  const requirements = extractBlueprintRequirements(html);
-  const tags = extractBlueprintTagNames(html);
-  const description = extractBlueprintDescription(html);
+  const requirements = extractBlueprintRequirements($);
+  const tags = extractBlueprintTagNames($);
+  const description = extractBlueprintDescription($);
 
   if (!includeBlueprint) {
     console.debug(
@@ -143,7 +149,7 @@ function buildSearchUrl(params: BlueprintSearchParams): string {
   const searchParams = new URLSearchParams({
     search: params.search,
     tags: (params.tags ?? []).join(" "),
-    author: params.author ?? '',
+    author: params.author ?? "",
     max_structures: "",
     color: "",
     color_similarity: "80",
@@ -154,102 +160,85 @@ function buildSearchUrl(params: BlueprintSearchParams): string {
   return `${BASE_URL}?${searchParams.toString()}`;
 }
 
-function extractBlueprintCardSections(html: string): string[] {
-  const marker = '<li class="o-blueprint-card factory"';
-  const sections: string[] = [];
-  let cursor = html.indexOf(marker);
-
-  while (cursor !== -1) {
-    const nextCursor = html.indexOf(marker, cursor + marker.length);
-    const end = nextCursor === -1 ? html.length : nextCursor;
-    sections.push(html.slice(cursor, end));
-    cursor = nextCursor;
-  }
-
-  if (sections.length === 0) {
-    console.warn(
-      "[blueprint-scraper:extractBlueprintCardSections] no cards found",
-    );
-  }
-
-  return sections;
-}
-
-function parseBlueprintCard(cardHtml: string): Blueprint | null {
-  const idMatch = cardHtml.match(/data-blueprint-id="(\d+)"/);
-  if (!idMatch?.[1]) {
+function parseBlueprintCard(
+  $: ReturnType<typeof load>,
+  element: Element,
+): Blueprint | null {
+  const card = $(element);
+  const id = card.attr("data-blueprint-id") ?? "";
+  if (!id) {
     console.warn(
       "[blueprint-scraper:parseBlueprintCard] missing blueprint id",
     );
     return null;
   }
 
-  const nameMatch = cardHtml.match(
-    /<h2>[\s\S]*?<a [^>]*>([\s\S]*?)<\/a>/,
+  const name = normalizeText(card.find("h2 a").first().text());
+  const author = normalizeText(
+    card.find(".o-blueprint-card__summary a").first().text(),
   );
-  const authorMatch = cardHtml.match(
-    /by\s*<a [^>]*>([\s\S]*?)<\/a>/,
+  const url = normalizeText(
+    decodeHtmlEntities(
+      card.find(".o-blueprint-card__cover a").attr("href") ?? "",
+    ),
   );
-  const urlMatch = cardHtml.match(
-    /<div class="o-blueprint-card__cover">[\s\S]*?<a href="([^"]+)"/,
-  );
-  const tagsMatch = cardHtml.match(
-    /<ul class="o-blueprint-card__tags">([\s\S]*?)<\/ul>/,
-  );
+  const tags = card
+    .find(".o-blueprint-card__tags li")
+    .toArray()
+    .map((tagElement) => normalizeText($(tagElement).text()))
+    .filter((tag) => tag.length > 0);
 
-  const tags = tagsMatch?.[1]
-    ? extractTags(tagsMatch[1])
-    : [];
-  const url = urlMatch?.[1]
-    ? decodeHtmlEntities(urlMatch[1]).trim()
-    : "";
+  if (tags.length === 0) {
+    console.warn("[blueprint-scraper:parseBlueprintCard] no tags found", id);
+  }
 
   if (!url) {
     console.warn(
       "[blueprint-scraper:parseBlueprintCard] missing blueprint url",
-      idMatch[1],
+      id,
     );
   }
 
   return {
-    id: idMatch[1],
-    name: normalizeText(nameMatch?.[1] ?? ""),
-    author: normalizeText(authorMatch?.[1] ?? ""),
+    id,
+    name,
+    author,
     tags,
     url,
   };
 }
 
-function extractBlueprintText(html: string): string {
-  const blueprintMatch = html.match(
-    /<textarea[^>]*data-clipboard-target="true"[^>]*>([\s\S]*?)<\/textarea>/,
-  );
-
-  if (!blueprintMatch?.[1]) {
+function extractBlueprintText(
+  $: ReturnType<typeof load>,
+): string {
+  const blueprintText = $("textarea[data-clipboard-target='true']")
+    .first()
+    .text();
+  if (!blueprintText) {
     console.warn(
       "[blueprint-scraper:extractBlueprintText] missing blueprint textarea",
     );
     return "";
   }
 
-  return decodeHtmlEntities(blueprintMatch[1]).trim();
+  return decodeHtmlEntities(blueprintText).trim();
 }
 
-function extractBlueprintRequirements(html: string): BlueprintRequirement[] {
-  const listHtml = extractRequirementsListHtml(html);
-  if (!listHtml) {
+function extractBlueprintRequirements(
+  $: ReturnType<typeof load>,
+): BlueprintRequirement[] {
+  const listElement = $("ul.t-blueprint__requirements-data").first();
+  if (listElement.length === 0) {
     console.warn(
       "[blueprint-scraper:extractBlueprintRequirements] missing requirements list",
     );
     return [];
   }
 
-  const entitySections = extractRequirementEntitySections(
-    listHtml,
-  );
-
-  const requirements = entitySections
-    .map(parseRequirementEntity)
+  const requirements = listElement
+    .find("li.t-blueprint__requirements-entity")
+    .toArray()
+    .map((element) => parseRequirementEntity($, element))
     .filter(
       (requirement): requirement is BlueprintRequirement =>
         requirement !== null,
@@ -263,26 +252,28 @@ function extractBlueprintRequirements(html: string): BlueprintRequirement[] {
   return requirements;
 }
 
-function extractBlueprintTagNames(html: string): string[] {
-  const tagSection = extractBlueprintTagSection(html);
-  if (!tagSection) {
+function extractBlueprintTagNames(
+  $: ReturnType<typeof load>,
+): string[] {
+  const tagSection = $("div.t-blueprint__tags").first();
+  if (tagSection.length === 0) {
     console.warn(
       "[blueprint-scraper:extractBlueprintTagNames] missing tag section",
     );
     return [];
   }
 
-  const tagMatches = tagSection.matchAll(
-    /data-tippy-content="([^"]+)"/g,
-  );
-  const tags: string[] = [];
-
-  for (const match of tagMatches) {
-    const tag = normalizeText(match[1] ?? "");
-    if (tag.length > 0) {
-      tags.push(tag);
-    }
-  }
+  const tags = tagSection
+    .find("[data-tippy-content]")
+    .toArray()
+    .map((element) =>
+      normalizeText(
+        decodeHtmlEntities(
+          $(element).attr("data-tippy-content") ?? "",
+        ),
+      ),
+    )
+    .filter((tag) => tag.length > 0);
 
   if (tags.length === 0) {
     console.warn(
@@ -293,143 +284,40 @@ function extractBlueprintTagNames(html: string): string[] {
   return tags;
 }
 
-function extractBlueprintDescription(html: string): string {
-  const descriptionMatch = html.match(
-    /<div class="trix-content">[\s\S]*?<div>([\s\S]*?)<\/div>/,
-  );
+function extractBlueprintDescription(
+  $: ReturnType<typeof load>,
+): string {
+  const descriptionText = $("div.trix-content")
+    .find("div")
+    .first()
+    .text();
 
-  if (!descriptionMatch?.[1]) {
+  if (!descriptionText) {
     console.warn(
       "[blueprint-scraper:extractBlueprintDescription] missing description",
     );
     return "";
   }
 
-  return normalizeText(descriptionMatch[1].replace(/<[^>]+>/g, " "));
-}
-
-function extractBlueprintTagSection(html: string): string | null {
-  const marker = '<div class="t-blueprint__tags">';
-  const start = html.indexOf(marker);
-  if (start === -1) {
-    return null;
-  }
-
-  let cursor = start + marker.length;
-  let depth = 1;
-
-  while (cursor < html.length) {
-    const nextOpen = html.indexOf("<div", cursor);
-    const nextClose = html.indexOf("</div>", cursor);
-
-    if (nextClose === -1) {
-      console.warn(
-        "[blueprint-scraper:extractBlueprintTagSection] closing div not found",
-      );
-      return null;
-    }
-
-    if (nextOpen !== -1 && nextOpen < nextClose) {
-      depth += 1;
-      cursor = nextOpen + 4;
-      continue;
-    }
-
-    depth -= 1;
-    if (depth === 0) {
-      return html.slice(start + marker.length, nextClose);
-    }
-
-    cursor = nextClose + 6;
-  }
-
-  console.warn(
-    "[blueprint-scraper:extractBlueprintTagSection] tag section not closed",
-  );
-  return null;
-}
-
-function extractRequirementsListHtml(html: string): string | null {
-  const listMarker = '<ul class="t-blueprint__requirements-data">';
-  const start = html.indexOf(listMarker);
-  if (start === -1) {
-    console.warn(
-      "[blueprint-scraper:extractRequirementsListHtml] requirements list marker not found",
-    );
-    return null;
-  }
-
-  let cursor = start + listMarker.length;
-  let depth = 1;
-
-  while (cursor < html.length) {
-    const nextOpen = html.indexOf("<ul", cursor);
-    const nextClose = html.indexOf("</ul>", cursor);
-
-    if (nextClose === -1) {
-      console.warn(
-        "[blueprint-scraper:extractRequirementsListHtml] closing list tag not found",
-      );
-      return null;
-    }
-
-    if (nextOpen !== -1 && nextOpen < nextClose) {
-      depth += 1;
-      cursor = nextOpen + 3;
-      continue;
-    }
-
-    depth -= 1;
-    if (depth === 0) {
-      return html.slice(start + listMarker.length, nextClose);
-    }
-
-    cursor = nextClose + 5;
-  }
-
-  console.warn(
-    "[blueprint-scraper:extractRequirementsListHtml] requirements list not closed",
-  );
-  return null;
-}
-
-function extractRequirementEntitySections(listHtml: string): string[] {
-  const marker = '<li class="t-blueprint__requirements-entity">';
-  const sections: string[] = [];
-  let cursor = listHtml.indexOf(marker);
-
-  while (cursor !== -1) {
-    const nextCursor = listHtml.indexOf(marker, cursor + marker.length);
-    const end = nextCursor === -1 ? listHtml.length : nextCursor;
-    sections.push(listHtml.slice(cursor, end));
-    cursor = nextCursor;
-  }
-
-  if (sections.length === 0) {
-    console.warn(
-      "[blueprint-scraper:extractRequirementEntitySections] no entity sections found",
-    );
-  }
-
-  return sections;
+  return normalizeText(descriptionText);
 }
 
 function parseRequirementEntity(
-  entityHtml: string,
+  $: ReturnType<typeof load>,
+  element: Element,
 ): BlueprintRequirement | null {
-  const tallyMatch = entityHtml.match(
-    /<div class="t-blueprint__requirements-entity__tally">([\s\S]*?)<\/div>/,
+  const entity = $(element);
+  const name = normalizeText(
+    decodeHtmlEntities(
+      entity
+        .find("[data-tippy-content]")
+        .first()
+        .attr("data-tippy-content") ?? "",
+    ),
   );
-  const nameMatch = entityHtml.match(
-    /t-blueprint__requirements-entity__tally[\s\S]*?data-tippy-content="([^"]+)"/,
+  const count = parseCountFromHtml(
+    entity.find(".t-blueprint__requirements-entity__tally").first().text(),
   );
-
-  const name = nameMatch?.[1]
-    ? decodeHtmlEntities(nameMatch[1]).trim()
-    : "";
-  const count = tallyMatch?.[1]
-    ? parseCountFromHtml(tallyMatch[1])
-    : 0;
 
   if (!name || count === 0) {
     console.warn(
@@ -442,12 +330,9 @@ function parseRequirementEntity(
     return null;
   }
 
-  const recipesMatch = entityHtml.match(
-    /<ul class="t-blueprint__requirements-entity__recipes">([\s\S]*?)<\/ul>/,
+  const recipes = extractRecipeEntries(
+    entity.find("ul.t-blueprint__requirements-entity__recipes").first(),
   );
-  const recipes = recipesMatch?.[1]
-    ? extractRecipeEntries(recipesMatch[1])
-    : [];
 
   return {
     name,
@@ -456,34 +341,46 @@ function parseRequirementEntity(
   };
 }
 
-function extractRecipeEntries(recipesHtml: string): BlueprintRequirementRecipe[] {
-  const recipeMatches = recipesHtml.matchAll(
-    /<li[^>]*class="t-blueprint__requirements-entity__recipe[^"]*"[^>]*>([\s\S]*?)<\/li>/g,
-  );
+function extractRecipeEntries(
+  recipesElement: Cheerio<Element>,
+): BlueprintRequirementRecipe[] {
+  if (recipesElement.length === 0) {
+    console.debug(
+      "[blueprint-scraper:extractRecipeEntries] no recipes found",
+    );
+    return [];
+  }
 
-  const recipes: BlueprintRequirementRecipe[] = [];
-  for (const match of recipeMatches) {
-    const entryHtml = match[0];
-    const nameMatch = entryHtml.match(/data-tippy-content="([^"]+)"/);
-    const count = parseCountFromHtml(match[1] ?? "");
-    const name = nameMatch?.[1]
-      ? decodeHtmlEntities(nameMatch[1]).trim()
-      : "";
+  const recipes = recipesElement
+    .find("li.t-blueprint__requirements-entity__recipe")
+    .toArray()
+    .map((element) => {
+      const entry = recipesElement.find(element);
+      const name = normalizeText(
+        decodeHtmlEntities(entry.attr("data-tippy-content") ?? ""),
+      );
+      const count = parseCountFromHtml(entry.text());
 
-    if (!name || count === 0) {
-      console.warn(
-        "[blueprint-scraper:extractRecipeEntries] missing recipe data",
+      if (!name || count === 0) {
+        console.warn(
+          "[blueprint-scraper:extractRecipeEntries] missing recipe data",
+          name,
+          count,
+        );
+        return null;
+      }
+
+      return {
         name,
         count,
-      );
-      continue;
-    }
-
-    recipes.push({
-      name,
-      count,
-    });
-  }
+      };
+    })
+    .filter(
+      (
+        recipe,
+      ): recipe is BlueprintRequirementRecipe =>
+        recipe !== null,
+    );
 
   if (recipes.length === 0) {
     console.debug(
@@ -500,26 +397,6 @@ function parseCountFromHtml(value: string): number {
   return match ? Number.parseInt(match[0], 10) : 0;
 }
 
-function extractTags(tagsHtml: string): string[] {
-  const tagMatches = tagsHtml.matchAll(
-    /<li class="o-blueprint-card__tags-tag[^"]*">([\s\S]*?)<\/li>/g,
-  );
-
-  const tags: string[] = [];
-  for (const match of tagMatches) {
-    const tag = normalizeText(match[1] ?? "");
-    if (tag.length > 0) {
-      tags.push(tag);
-    }
-  }
-
-  if (tags.length === 0) {
-    console.warn("[blueprint-scraper:extractTags] no tags found");
-  }
-
-  return tags;
-}
-
 function normalizeText(value: string): string {
   return decodeHtmlEntities(value)
     .replace(/\s+/g, " ")
@@ -534,4 +411,3 @@ function decodeHtmlEntities(value: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'");
 }
-
