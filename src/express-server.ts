@@ -6,6 +6,8 @@ import {
   type Blueprint,
   type BlueprintDetails,
 } from "./blueprints/blueprint-scraper.js";
+import { createMemoryCacheStore } from "./cache/memory-cache-store.js";
+import { getAppConfig } from "./config/app-config.js";
 
 type SearchQuery = {
   search?: string | string[];
@@ -224,6 +226,9 @@ function sendError(res: Response<ErrorResponse>, status: number, message: string
 
 function createApp() {
   const app = express();
+  const config = getAppConfig();
+  const searchCache = createMemoryCacheStore<Blueprint[]>();
+  const detailsCache = createMemoryCacheStore<BlueprintDetails>();
 
   app.get("/health", (_req: Request, res: Response) => {
     console.log("[express-server:health] ok");
@@ -258,11 +263,21 @@ function createApp() {
       );
 
       try {
+        const cacheKey = buildSearchCacheKey(search, author, tags);
+        const cachedResults = searchCache.get(cacheKey);
+        if (cachedResults) {
+          console.log("[express-server:search] cache hit", cacheKey);
+          res.json(cachedResults);
+          return;
+        }
+
         const results = await searchBlueprints({
           search,
           tags: tags ?? [],
           author,
         });
+        searchCache.set(cacheKey, results, config.cacheTtlMs);
+        console.log("[express-server:search] cache set", cacheKey);
         res.json(results);
       } catch (error) {
         console.error("[express-server:search] search failed", error);
@@ -297,9 +312,19 @@ function createApp() {
       );
 
       try {
+        const cacheKey = buildDetailsCacheKey(path, includeBlueprint);
+        const cachedDetails = detailsCache.get(cacheKey);
+        if (cachedDetails) {
+          console.log("[express-server:details] cache hit", cacheKey);
+          res.json(cachedDetails);
+          return;
+        }
+
         const details = await fetchBlueprintDetails(path, {
           includeBlueprint,
         });
+        detailsCache.set(cacheKey, details, config.cacheTtlMs);
+        console.log("[express-server:details] cache set", cacheKey);
         res.json(details);
       } catch (error) {
         console.error("[express-server:details] details fetch failed", error);
@@ -316,6 +341,33 @@ function createApp() {
   app.use("/docs", swaggerUi.serve, swaggerUi.setup(OPENAPI_SPEC));
 
   return app;
+}
+
+function buildSearchCacheKey(
+  search: string,
+  author: string,
+  tags: string[],
+): string {
+  const normalizedTags = tags.join(",");
+  const cacheKey = `search:${search}|author:${author}|tags:${normalizedTags}`;
+  console.debug(
+    "[express-server:buildSearchCacheKey] cache key built",
+    cacheKey,
+  );
+  return cacheKey;
+}
+
+function buildDetailsCacheKey(
+  path: string,
+  includeBlueprint: boolean | undefined,
+): string {
+  const includeBlueprintKey = includeBlueprint ?? "default";
+  const cacheKey = `details:${path}|includeBlueprint:${includeBlueprintKey}`;
+  console.debug(
+    "[express-server:buildDetailsCacheKey] cache key built",
+    cacheKey,
+  );
+  return cacheKey;
 }
 
 const port = Number.parseInt(process.env.PORT ?? "3000", 10);
